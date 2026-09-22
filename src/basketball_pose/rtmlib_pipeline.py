@@ -6,12 +6,15 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from .auto_config import shot_for_frame
 from .court import point_in_normalized_polygon, pose_foot_point
 from .io import write_json
 from .postprocess import (
     annotate_roi_tracks,
+    assign_appearance_segments,
     cluster_two_teams,
     hsv_team_feature,
+    is_usable_team_color_sample,
     mark_short_stationary_boundary_tracks,
     mark_single_frame_uncertain,
     median_feature,
@@ -120,9 +123,102 @@ def _draw_record(frame, record: dict[str, object]) -> None:
     cv2.putText(frame, label, (x1, max(14, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
 
 
+def _infer_frame(model, detector, sportsmot: bool, frame, width: int, height: int):
+    """Return pose data and the detector boxes used for one frame."""
+    if sportsmot:
+        player_candidates = detector(frame)
+        candidate_boxes = [bbox for bbox, _ in player_candidates]
+        if candidate_boxes:
+            keypoints_array, scores_array = model(frame, bboxes=candidate_boxes)
+        else:
+            keypoints_array, scores_array = [], []
+    else:
+        player_candidates = []
+        keypoints_array, scores_array = model(frame)
+    result = []
+    for pose_index, (keypoints, scores) in enumerate(zip(keypoints_array, scores_array)):
+        if sportsmot:
+            bbox, detector_score = player_candidates[pose_index]
+        else:
+            bbox = _bbox_from_pose(keypoints, scores, width, height)
+            detector_score = None
+        if bbox is not None:
+            result.append((keypoints, scores, bbox, detector_score))
+    return result
+
+
+def _expand_polygon(polygon: list[tuple[float, float]], amount: float = 0.04):
+    return [
+        (round(min(1.0, max(0.0, x + (amount if x >= 0.5 else -amount))), 4),
+         round(min(1.0, max(1e-4, y + (amount if y >= 0.5 else -amount))), 4))
+        for x, y in polygon
+    ]
+
+
+def _trial_auto_config(
+    source: Path, config: dict[str, object], model, detector, sportsmot: bool,
+    width: int, height: int,
+) -> dict[str, object]:
+    """Probe distributed representative frames and apply at most one cautious correction."""
+    import cv2
+    import numpy as np
+
+    capture = cv2.VideoCapture(str(source))
+    diagnoses = []
+    corrections = []
+    for shot in config.get("shots", []):
+        polygon = [tuple(point) for point in shot["court_polygon_normalized"]]
+        total, outside = 0, 0
+        for frame_id in shot.get("representative_frame_ids", []):
+            capture.set(cv2.CAP_PROP_POS_FRAMES, int(frame_id))
+            ok, frame = capture.read()
+            if not ok:
+                continue
+            for keypoints, scores, bbox, _ in _infer_frame(
+                model, detector, sportsmot, frame, width, height
+            ):
+                points = tuple(
+                    (float(point[0]), float(point[1]), float(np.clip(score, 0.0, 1.0)))
+                    for point, score in zip(keypoints, scores)
+                )
+                foot = pose_foot_point(list(points), bbox)
+                total += 1
+                outside += not point_in_normalized_polygon(foot, (width, height), polygon)
+        outside_fraction = outside / total if total else None
+        diagnosis = {
+            "shot_id": shot["shot_id"],
+            "representative_frame_ids": shot.get("representative_frame_ids", []),
+            "trial_pose_candidates": total,
+            "outside_roi_candidates": outside,
+            "outside_roi_fraction": outside_fraction,
+            "status": "ok" if total else "unknown",
+            "reason": None if total else "no pose candidates in representative frames",
+        }
+        # Correct only a strongly evidenced, too-tight ROI.  A broad expansion is
+        # intentionally avoided because it would admit spectators/camera crew.
+        if (
+            not corrections and total >= 6 and outside_fraction is not None
+            and outside_fraction >= 0.70
+        ):
+            expanded = _expand_polygon(polygon)
+            shot["court_polygon_normalized"] = [list(point) for point in expanded]
+            diagnosis["status"] = "corrected_once"
+            diagnosis["reason"] = "representative multi-shot trial indicated a too-tight ROI"
+            corrections.append({"shot_id": shot["shot_id"], "action": "expand_roi_0.04"})
+        diagnoses.append(diagnosis)
+    capture.release()
+    return {
+        "scope": "representative_frames_from_every_detected_shot",
+        "automatic_corrections": corrections,
+        "correction_limit": 1,
+        "shots": diagnoses,
+    }
+
+
 def run_video(
     input_path: str | Path, output_dir: str | Path, config_path: str | Path,
     model_name: str = "rtmo", device: str = "cpu", max_frames: int | None = None,
+    automatic_config: bool = False,
 ) -> dict[str, object]:
     import cv2
     import numpy as np
@@ -170,6 +266,10 @@ def run_video(
     fps = float(capture.get(cv2.CAP_PROP_FPS))
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    if automatic_config:
+        trial = _trial_auto_config(source, config, model, detector, sportsmot, width, height)
+        write_json(destination.parent.parent / "configs" / source.stem / "trial_diagnosis.json", trial)
+        write_json(destination.parent.parent / "configs" / source.stem / "auto_config.json", config)
     tracker = OcclusionAwareTracker(max_missed=8)
     raw_records: list[dict[str, object]] = []
     occlusion_events: list[dict[str, object]] = []
@@ -180,42 +280,39 @@ def run_video(
     cut_threshold = float(config.get("shot_cut_threshold", 50.0))
     cut_cooldown = int(config.get("shot_cut_cooldown", 15))
     last_cut_frame = -cut_cooldown
+    current_auto_shot_id = None
 
     while max_frames is None or frame_id < max_frames:
         ok, frame = capture.read()
         if not ok:
             break
+        configured_shot = shot_for_frame(config, frame_id) if automatic_config else None
+        if configured_shot is not None:
+            active_polygon = [tuple(point) for point in configured_shot["court_polygon_normalized"]]
+            active_shot_id = str(configured_shot["shot_id"])
+        else:
+            active_polygon = polygon
+            active_shot_id = f"shot_{shot_index:04d}"
         cut_frame = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (160, 90))
-        if (
-            previous_cut_frame is not None
+        detected_cut = (
+            not automatic_config
+            and previous_cut_frame is not None
             and float(np.mean(cv2.absdiff(cut_frame, previous_cut_frame))) >= cut_threshold
             and frame_id - last_cut_frame >= cut_cooldown
-        ):
+        )
+        configured_cut = automatic_config and current_auto_shot_id not in (None, active_shot_id)
+        if detected_cut or configured_cut:
             next_track_id = tracker.next_id
             tracker = OcclusionAwareTracker(max_missed=8)
             tracker.next_id = next_track_id
             shot_index += 1
             last_cut_frame = frame_id
+        current_auto_shot_id = active_shot_id
         previous_cut_frame = cut_frame
-        if sportsmot:
-            player_candidates = detector(frame)
-            candidate_boxes = [bbox for bbox, _ in player_candidates]
-            if candidate_boxes:
-                keypoints_array, scores_array = model(frame, bboxes=candidate_boxes)
-            else:
-                keypoints_array, scores_array = [], []
-        else:
-            player_candidates = []
-            keypoints_array, scores_array = model(frame)
         detections: list[PoseDetection] = []
-        for pose_index, (keypoints, scores) in enumerate(zip(keypoints_array, scores_array)):
-            if sportsmot:
-                bbox, detector_score = player_candidates[pose_index]
-            else:
-                bbox = _bbox_from_pose(keypoints, scores, width, height)
-                detector_score = None
-            if bbox is None:
-                continue
+        for keypoints, scores, bbox, detector_score in _infer_frame(
+            model, detector, sportsmot, frame, width, height
+        ):
             points = tuple(
                 (float(point[0]), float(point[1]), float(np.clip(score, 0.0, 1.0)))
                 for point, score in zip(keypoints, scores)
@@ -227,7 +324,7 @@ def run_video(
                 float(np.clip(foot_y, 0.0, height - 1.0)),
             )
             on_court = point_in_normalized_polygon(
-                visible_foot, (width, height), polygon
+                visible_foot, (width, height), active_polygon
             )
             detections.append(PoseDetection(
                 bbox_xyxy=bbox,
@@ -238,9 +335,11 @@ def run_video(
                 metadata={"on_court": on_court, "detector_score": detector_score},
             ))
 
+        overlaps = mark_overlaps(detections)
+        for detection, overlap in zip(detections, overlaps):
+            detection.metadata["overlap"] = overlap
         track_ids = tracker.update(detections)
         track_by_detection = dict(enumerate(track_ids))
-        overlaps = mark_overlaps(detections)
         overlap_by_detection = dict(enumerate(overlaps))
         missing = [track.track_id for track in tracker.tracks.values() if track.missed > 0]
         if missing:
@@ -258,7 +357,7 @@ def run_video(
                 role_votes[track_id][detection.role] += 1
             raw_records.append({
                 "video_id": source.stem,
-                "shot_id": f"shot_{shot_index:04d}",
+                "shot_id": active_shot_id,
                 "frame_id": frame_id,
                 "timestamp": frame_id / fps,
                 "track_id": str(track_id) if track_id is not None else None,
@@ -271,6 +370,10 @@ def run_video(
                 "recovered_low_confidence": recovered_low_confidence,
                 "uniform_hsv": list(detection.appearance_hsv) if detection.appearance_hsv else None,
                 "observed_role": detection.role,
+                "roi_config_confidence": (
+                    configured_shot.get("roi_estimation", {}).get("confidence", "manual")
+                    if configured_shot is not None else "manual"
+                ),
                 "on_court": detection.metadata["on_court"],
                 "roi_status": "inside" if detection.metadata["on_court"] else "outside_pending",
                 "overlap": overlap_by_detection.get(index, False),
@@ -296,35 +399,31 @@ def run_video(
         (width, height),
         max_track_length=int(config.get("nonplayer_max_track_length", 15)),
     )
+    assign_appearance_segments(raw_records)
 
-    team_samples: dict[str, dict[int, list[tuple[float, float, float]]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
+    team_samples: dict[tuple[str, int, int], list[tuple[float, float, float]]] = defaultdict(list)
     for record in raw_records:
         track_id = int(record["track_id"])
-        final_role = final_roles.get(track_id)
         hsv = record["uniform_hsv"]
-        if record["keep_after_roi"] and final_role != "referee_candidate" and hsv is not None:
-            team_samples[str(record["shot_id"])][track_id].append(hsv_team_feature(tuple(hsv)))
+        record["final_role"] = final_roles.get(track_id)
+        if is_usable_team_color_sample(record):
+            team_samples[(
+                str(record["shot_id"]), track_id, int(record["appearance_segment"])
+            )].append(hsv_team_feature(tuple(hsv)))
     minimum_team_samples = int(config.get("team_min_feature_frames", 3))
-    team_features: dict[tuple[str, int], tuple[float, float, float]] = {}
-    team_assignments: dict[tuple[str, int], tuple[str, float]] = {}
-    for shot_id, shot_samples in team_samples.items():
-        shot_features = {
-            track_id: median_feature(samples)
-            for track_id, samples in shot_samples.items()
-            if len(samples) >= minimum_team_samples
-        }
-        shot_assignments = cluster_two_teams(
-            shot_features,
-            confidence_threshold=float(config.get("team_confidence_threshold", 0.55)),
-        )
-        team_features.update(
-            {(shot_id, track_id): feature for track_id, feature in shot_features.items()}
-        )
-        team_assignments.update(
-            {(shot_id, track_id): value for track_id, value in shot_assignments.items()}
-        )
+    team_features: dict[tuple[str, int, int], tuple[float, float, float]] = {}
+    team_assignments: dict[tuple[str, int, int], tuple[str, float]] = {}
+    team_features = {
+        track_key: median_feature(samples)
+        for track_key, samples in team_samples.items()
+        if len(samples) >= minimum_team_samples
+    }
+    team_assignments = cluster_two_teams(
+        team_features,
+        confidence_threshold=float(config.get("team_confidence_threshold", 0.55)),
+        minimum_cluster_tracks=int(config.get("team_min_cluster_tracks", 2)),
+        maximum_imbalance_ratio=float(config.get("team_max_imbalance_ratio", 8.0)),
+    )
 
     player_records = []
     per_frame_kept: dict[int, list[dict[str, object]]] = defaultdict(list)
@@ -332,11 +431,19 @@ def run_video(
         track_id = record["track_id"]
         final_role = final_roles.get(int(track_id)) if track_id is not None else None
         record["final_role"] = final_role
-        track_key = (str(record["shot_id"]), int(track_id))
+        track_key = (
+            str(record["shot_id"]), int(track_id), int(record["appearance_segment"])
+        )
         team_id, team_confidence = team_assignments.get(track_key, ("unknown", 0.0))
         record["team_id"] = team_id
         record["team_confidence"] = team_confidence
         record["team_feature"] = list(team_features[track_key]) if track_key in team_features else None
+        record["team_assignment_reason"] = (
+            "global_cross_shot_cluster_segmented" if team_id != "unknown" else (
+                "insufficient_feature_frames" if track_key not in team_features
+                else "ambiguous_or_imbalanced_global_clusters"
+            )
+        )
         if exclude_referee_by_uniform and final_role == "referee_candidate":
             record["keep_after_roi"] = False
             record["review_status"] = "rejected"
@@ -370,7 +477,9 @@ def run_video(
     write_json(destination / "detections_audit.json", {"records": raw_records})
     write_json(destination / "pose2d_players.json", {"records": player_records})
     kept_track_ids = {
-        (str(record["shot_id"]), int(record["track_id"])) for record in player_records
+        (
+            str(record["shot_id"]), int(record["track_id"]), int(record["appearance_segment"])
+        ) for record in player_records
     }
     edge_track_ids = {
         int(record["track_id"])
@@ -414,7 +523,12 @@ def run_video(
             team_assignments.get(track_id, ("unknown", 0.0))[0]
             for track_id in kept_track_ids
         )),
+        "unknown_team_assignment_reasons": dict(Counter(
+            record["team_assignment_reason"] for record in player_records
+            if record["team_id"] == "unknown"
+        )),
         "shots": shot_index + 1,
+        "automatic_config": automatic_config,
         "exclude_referee_by_uniform": exclude_referee_by_uniform,
         "occlusion_events": occlusion_events,
     }

@@ -74,10 +74,13 @@ class OcclusionAwareTracker:
         candidates = []
         for track_id, track in self.tracks.items():
             for detection_id, detection in enumerate(detections):
+                appearance_weight = 0.0 if detection.metadata.get("overlap") else 0.20
                 score = (
                     0.35 * bbox_iou(track.bbox_xyxy, detection.bbox_xyxy)
                     + 0.45 * _pose_similarity(track, detection)
-                    + 0.20 * _appearance_similarity(track.appearance_hsv, detection.appearance_hsv)
+                    + appearance_weight * _appearance_similarity(
+                        track.appearance_hsv, detection.appearance_hsv
+                    )
                 )
                 if score >= self.match_threshold:
                     candidates.append((score, track_id, detection_id))
@@ -97,11 +100,17 @@ class OcclusionAwareTracker:
                 track_id = self.next_id
                 self.next_id += 1
                 assignments[detection_id] = track_id
+            previous = self.tracks.get(track_id)
+            appearance = (
+                previous.appearance_hsv
+                if detection.metadata.get("overlap") and previous is not None
+                else detection.appearance_hsv
+            )
             self.tracks[track_id] = TrackState(
                 track_id=track_id,
                 bbox_xyxy=detection.bbox_xyxy,
                 keypoints=detection.keypoints,
-                appearance_hsv=detection.appearance_hsv,
+                appearance_hsv=appearance,
                 missed=0,
                 age=self.tracks.get(track_id, TrackState(
                     track_id, detection.bbox_xyxy, detection.keypoints,
@@ -122,4 +131,3 @@ def mark_overlaps(detections: list[PoseDetection], threshold: float = 0.15) -> l
             if bbox_iou(detections[left].bbox_xyxy, detections[right].bbox_xyxy) >= threshold:
                 overlaps[left] = overlaps[right] = True
     return overlaps
-

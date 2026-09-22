@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .auto_config import write_auto_config
 from .io import load_records, write_json
 from .keypoints import H36M17_NAMES, coco17_to_h36m17
 from .mmpose_adapter import run_inference
@@ -76,8 +77,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     video = subparsers.add_parser("run-video", help="run basketball-aware 2D pose pipeline")
     video.add_argument("input")
-    video.add_argument("output_dir")
-    video.add_argument("--config", required=True)
+    video.add_argument("output_dir", nargs="?")
+    video.add_argument("--config")
+    video.add_argument(
+        "--auto-config", action="store_true",
+        help="force a fresh full-video configuration; ignores any existing configs/<video>.json",
+    )
     video.add_argument(
         "--model", choices=("rtmpose", "rtmo", "sportsmot-rtmpose"), default="rtmo"
     )
@@ -87,15 +92,38 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
     if args.command == "validate":
         return _validate(args.input)
     if args.command == "preprocess":
         return _preprocess(args.input, args.output, args.max_gap)
     if args.command == "run-video":
+        source = Path(args.input)
+        project_root = Path(__file__).resolve().parents[2]
+        existing_video_config = project_root / "configs" / f"{source.stem}.json"
+        automatic = args.auto_config or (args.config is None and not existing_video_config.exists())
+        if automatic:
+            config_dir = project_root / "auto-video-config" / "configs" / source.stem
+            output_dir = project_root / "auto-video-config" / "outputs" / source.stem
+            if args.output_dir and Path(args.output_dir).resolve() != output_dir.resolve():
+                parser.error(
+                    "automatic runs always write to auto-video-config/outputs/<video>; "
+                    "omit output_dir"
+                )
+            config_path = config_dir / "auto_config.json"
+            config = write_auto_config(source, config_path)
+            write_json(config_dir / "auto_config_analysis.json", config["analysis"] | {
+                "shots": config["shots"],
+            })
+        else:
+            if args.output_dir is None:
+                parser.error("output_dir is required when using an explicit or existing config")
+            output_dir = Path(args.output_dir)
+            config_path = Path(args.config) if args.config else existing_video_config
         summary = run_video(
-            args.input, args.output_dir, args.config, args.model, args.device,
-            args.max_frames,
+            source, output_dir, config_path, args.model, args.device,
+            args.max_frames, automatic,
         )
         print(summary)
         return 0

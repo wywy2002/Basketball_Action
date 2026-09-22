@@ -2,12 +2,14 @@ import unittest
 
 from basketball_pose.keypoints import coco17_to_h36m17
 from basketball_pose.postprocess import (
+    assign_appearance_segments,
     annotate_roi_tracks,
     cluster_two_teams,
     hsv_team_feature,
     mark_short_stationary_boundary_tracks,
     mark_single_frame_uncertain,
 )
+from basketball_pose.auto_config import shot_for_frame
 from basketball_pose.court import point_in_normalized_polygon, pose_foot_point
 from basketball_pose.quality import inspect_track
 from basketball_pose.roles import UniformRules, classify_uniform
@@ -97,6 +99,23 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(set(second_ids)), 2)
         self.assertEqual(mark_overlaps([detection(0.0), detection(60.0)]), [True, True])
 
+    def test_tracker_does_not_learn_contaminated_appearance_during_overlap(self) -> None:
+        def detection(x: float, hue: float, overlap: bool = False) -> PoseDetection:
+            record = make_record(0, x)
+            return PoseDetection(
+                bbox_xyxy=(x, 0.0, x + 100.0, 200.0),
+                keypoints=record.keypoints_2d,
+                score=0.9,
+                appearance_hsv=(hue, 200.0, 200.0),
+                metadata={"overlap": overlap},
+            )
+
+        tracker = OcclusionAwareTracker(max_missed=2)
+        ids = tracker.update([detection(0.0, 20.0), detection(140.0, 110.0)])
+        tracker.update([detection(15.0, 20.0, True), detection(115.0, 20.0, True)])
+        self.assertEqual(tracker.tracks[ids[0]].appearance_hsv[0], 20.0)
+        self.assertEqual(tracker.tracks[ids[1]].appearance_hsv[0], 110.0)
+
     def test_roi_track_recovers_short_edge_excursion(self) -> None:
         records = [
             {"track_id": "4", "frame_id": 0, "on_court": True},
@@ -152,6 +171,41 @@ class PipelineTests(unittest.TestCase):
     def test_team_clustering_keeps_insufficient_evidence_unknown(self) -> None:
         assignments = cluster_two_teams({1: hsv_team_feature((20.0, 200.0, 200.0))})
         self.assertEqual(assignments[1][0], "unknown")
+
+    def test_team_clustering_rejects_a_severely_unbalanced_split(self) -> None:
+        features = {
+            **{index: hsv_team_feature((25.0, 220.0, 220.0)) for index in range(9)},
+            9: hsv_team_feature((145.0, 220.0, 160.0)),
+        }
+        assignments = cluster_two_teams(features)
+        self.assertTrue(all(team_id == "unknown" for team_id, _ in assignments.values()))
+
+    def test_shot_config_selects_its_own_roi_by_frame(self) -> None:
+        config = {"shots": [
+            {"shot_id": "shot_0000", "start_frame": 0, "end_frame": 9},
+            {"shot_id": "shot_0001", "start_frame": 10, "end_frame": 19},
+        ]}
+        self.assertEqual(shot_for_frame(config, 14)["shot_id"], "shot_0001")
+        self.assertIsNone(shot_for_frame(config, 20))
+
+    def test_appearance_segment_splits_white_to_saturated_uniform_shift(self) -> None:
+        records = [
+            {
+                "shot_id": "shot_0000", "track_id": "6", "frame_id": frame_id,
+                "keep_after_roi": True, "overlap": False, "final_role": "team_light",
+                "uniform_hsv": [8.0, 25.0, 165.0],
+            }
+            for frame_id in range(3)
+        ] + [
+            {
+                "shot_id": "shot_0000", "track_id": "6", "frame_id": 3,
+                "keep_after_roi": True, "overlap": False, "final_role": "team_dark",
+                "uniform_hsv": [8.0, 160.0, 150.0],
+            }
+        ]
+        assign_appearance_segments(records)
+        self.assertEqual([record["appearance_segment"] for record in records], [0, 0, 0, 1])
+        self.assertEqual(records[-1]["identity_review_reason"], "appearance_shift_possible_id_switch")
 
 
 if __name__ == "__main__":

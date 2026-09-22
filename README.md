@@ -88,6 +88,41 @@ python -m basketball_pose.cli run-video input_videos\video_1.mp4 output\video_1 
   --config configs\video_1.json --model sportsmot-rtmpose --device cuda
 ```
 
+### 视频专属自动配置
+
+`run-video` 在未指定 `--config` 时优先使用 `configs/<视频名>.json`。没有该文件时，
+它会扫描完整视频、检测切镜并生成按镜头区分的配置。用 `--auto-config` 可以强制该
+流程，即使 `configs/video_1.json` 已存在也不会读取其 ROI：
+
+```powershell
+$env:PYTHONPATH = "$PWD\src"
+python -m basketball_pose.cli run-video input_videos\video_1.mp4 `
+  --auto-config --model sportsmot-rtmpose --device cuda
+```
+
+自动运行的配置与产物固定分离保存，且不会覆盖 `configs/` 或 `output/`：
+
+```text
+auto-video-config/configs/video_1/auto_config.json
+auto-video-config/configs/video_1/auto_config_analysis.json
+auto-video-config/configs/video_1/trial_diagnosis.json
+auto-video-config/outputs/video_1/
+```
+
+自动配置会对每个镜头的代表帧进行试运行；若多帧证据显示 ROI 过紧，最多只作一次
+保守修正。阵营聚类使用全视频的镜头轨迹共同建模，以保持同一比赛跨镜头的标签一致；
+证据不足或聚类严重失衡时，记录为 `unknown`。
+
+生成与旧人工配置结果的差异报告（差异不是准确率结论）：
+
+```powershell
+python tools\compare_auto_runs.py `
+  --baseline-root output `
+  --automatic-root auto-video-config\outputs `
+  --destination auto-video-config `
+  --videos video_1 video_2 video_3
+```
+
 ## 测试
 
 ```powershell
