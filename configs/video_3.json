@@ -1,7 +1,7 @@
 {
   "court_polygon_normalized": [
     [0.00, 0.30], [0.18, 0.23], [0.50, 0.20], [0.82, 0.23],
-    [1.00, 0.30], [1.00, 1.00], [0.00, 1.00]
+    [1.00, 0.30], [1.00, 0.88], [0.00, 0.88]
   ],
   "uniform_rules": {
     "referee_max_saturation": 55.0,
@@ -11,5 +11,12 @@
     "light_team_min_value": 120.0
   },
   "exclude_referee_by_uniform": true,
-  "notes": "Broad court ROI for video_3; SportsMOT supplies the primary player filter."
+  "edge_max_frame_gap": 8,
+  "edge_min_inside_run": 2,
+  "team_min_feature_frames": 3,
+  "team_confidence_threshold": 0.55,
+  "shot_cut_threshold": 50.0,
+  "shot_cut_cooldown": 15,
+  "nonplayer_max_track_length": 15,
+  "notes": "Court ROI is a spatial prior; edge players are recovered from track history."
 }

@@ -1,6 +1,13 @@
 import unittest
 
 from basketball_pose.keypoints import coco17_to_h36m17
+from basketball_pose.postprocess import (
+    annotate_roi_tracks,
+    cluster_two_teams,
+    hsv_team_feature,
+    mark_short_stationary_boundary_tracks,
+    mark_single_frame_uncertain,
+)
 from basketball_pose.court import point_in_normalized_polygon, pose_foot_point
 from basketball_pose.quality import inspect_track
 from basketball_pose.roles import UniformRules, classify_uniform
@@ -89,6 +96,62 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(first_ids, second_ids)
         self.assertEqual(len(set(second_ids)), 2)
         self.assertEqual(mark_overlaps([detection(0.0), detection(60.0)]), [True, True])
+
+    def test_roi_track_recovers_short_edge_excursion(self) -> None:
+        records = [
+            {"track_id": "4", "frame_id": 0, "on_court": True},
+            {"track_id": "4", "frame_id": 1, "on_court": True},
+            {"track_id": "4", "frame_id": 2, "on_court": False},
+        ]
+        annotate_roi_tracks(records, max_edge_gap=3)
+        self.assertEqual(records[2]["roi_status"], "outside_recovered")
+        self.assertTrue(records[2]["edge_track_recovery"])
+
+    def test_roi_track_rejects_single_frame_outside_object(self) -> None:
+        records = [{"track_id": "9", "frame_id": 5, "on_court": False}]
+        annotate_roi_tracks(records)
+        self.assertEqual(records[0]["rejection_reason"], "single_frame_outside_track")
+        self.assertFalse(records[0]["keep_after_roi"])
+
+    def test_single_frame_inside_track_is_audited_as_uncertain(self) -> None:
+        records = [{"track_id": "9", "frame_id": 5, "on_court": True}]
+        annotate_roi_tracks(records)
+        mark_single_frame_uncertain(records)
+        self.assertEqual(records[0]["rejection_reason"], "single_frame_inside_uncertain")
+        self.assertEqual(records[0]["review_status"], "uncertain")
+        self.assertFalse(records[0]["keep_after_roi"])
+
+    def test_short_stationary_horizontal_boundary_track_is_rejected(self) -> None:
+        records = [
+            {
+                "track_id": "12", "frame_id": frame_id, "on_court": True,
+                "bbox_xyxy": [820.0 + frame_id, 250.0, 950.0 + frame_id, 330.0],
+            }
+            for frame_id in range(8)
+        ]
+        annotate_roi_tracks(records)
+        mark_single_frame_uncertain(records)
+        mark_short_stationary_boundary_tracks(records, (1000, 600))
+        self.assertTrue(all(not record["keep_after_roi"] for record in records))
+        self.assertTrue(all(
+            record["rejection_reason"] == "short_stationary_boundary_track"
+            for record in records
+        ))
+
+    def test_team_clustering_separates_yellow_and_purple(self) -> None:
+        assignments = cluster_two_teams({
+            1: hsv_team_feature((28.0, 220.0, 220.0)),
+            2: hsv_team_feature((31.0, 205.0, 210.0)),
+            3: hsv_team_feature((145.0, 190.0, 150.0)),
+            4: hsv_team_feature((150.0, 210.0, 140.0)),
+        })
+        self.assertEqual(assignments[1][0], assignments[2][0])
+        self.assertEqual(assignments[3][0], assignments[4][0])
+        self.assertNotEqual(assignments[1][0], assignments[3][0])
+
+    def test_team_clustering_keeps_insufficient_evidence_unknown(self) -> None:
+        assignments = cluster_two_teams({1: hsv_team_feature((20.0, 200.0, 200.0))})
+        self.assertEqual(assignments[1][0], "unknown")
 
 
 if __name__ == "__main__":

@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import cv2
 import numpy as np
 
 
-def make_contact(video_path: Path) -> None:
+def make_contact(video_path: Path, requested_frames: list[int] | None = None) -> None:
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
         raise RuntimeError(f"cannot open {video_path}")
     frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-    sample_ids = (0, frame_count // 2, max(0, frame_count - 1))
+    sample_ids = requested_frames or [0, frame_count // 2, max(0, frame_count - 1)]
     panels: list[np.ndarray] = []
     for frame_id in sample_ids:
         capture.set(cv2.CAP_PROP_POS_FRAMES, frame_id)
@@ -40,8 +41,16 @@ def make_contact(video_path: Path) -> None:
 
 def main() -> None:
     output_root = Path(__file__).resolve().parents[1] / "output"
-    for video_path in sorted(output_root.glob("video_*/pose2d_audit.mp4")):
-        make_contact(video_path)
+    requested_frames = None
+    if len(sys.argv) > 2 and all(value.isdigit() for value in sys.argv[2:]):
+        video_paths = [Path(sys.argv[1])]
+        requested_frames = [int(value) for value in sys.argv[2:]]
+    else:
+        video_paths = [Path(value) for value in sys.argv[1:]] or sorted(
+            output_root.glob("video_*/pose2d_audit.mp4")
+        )
+    for video_path in video_paths:
+        make_contact(video_path, requested_frames)
 
 
 if __name__ == "__main__":
