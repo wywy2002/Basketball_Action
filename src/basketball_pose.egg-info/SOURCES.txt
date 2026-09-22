@@ -1,0 +1,16 @@
+README.md
+pyproject.toml
+src/basketball_pose/__init__.py
+src/basketball_pose/cli.py
+src/basketball_pose/io.py
+src/basketball_pose/keypoints.py
+src/basketball_pose/mmpose_adapter.py
+src/basketball_pose/quality.py
+src/basketball_pose/schema.py
+src/basketball_pose/tracks.py
+src/basketball_pose.egg-info/PKG-INFO
+src/basketball_pose.egg-info/SOURCES.txt
+src/basketball_pose.egg-info/dependency_links.txt
+src/basketball_pose.egg-info/entry_points.txt
+src/basketball_pose.egg-info/top_level.txt
+tests/test_pipeline.py

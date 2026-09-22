@@ -1,0 +1,15 @@
+{
+  "court_polygon_normalized": [
+    [0.00, 0.40], [0.18, 0.35], [0.50, 0.32], [0.82, 0.35],
+    [1.00, 0.40], [1.00, 0.88], [0.00, 0.88]
+  ],
+  "uniform_rules": {
+    "referee_max_saturation": 55.0,
+    "referee_min_value": 45.0,
+    "referee_max_value": 120.0,
+    "light_team_max_saturation": 70.0,
+    "light_team_min_value": 120.0
+  },
+  "exclude_referee_by_uniform": true,
+  "notes": "Initial broadcast-view ROI for video_1; verify after shot changes."
+}

@@ -1,0 +1,2 @@
+[console_scripts]
+basketball-pose = basketball_pose.cli:main

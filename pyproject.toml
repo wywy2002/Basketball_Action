@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "basketball-pose"
+version = "0.1.0"
+description = "2D-to-3D human pose pipeline for basketball videos"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = []
+
+[project.scripts]
+basketball-pose = "basketball_pose.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
