@@ -7,7 +7,7 @@ from pathlib import Path
 
 import cv2
 
-from basketball_pose.rtmlib_pipeline import _draw_record
+from basketball_pose.pipeline.rtmlib_pipeline import _draw_record
 
 
 def main() -> None:

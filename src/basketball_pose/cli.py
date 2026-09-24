@@ -3,13 +3,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .auto_config import write_auto_config
+from .config.auto_config import write_auto_config
 from .io import load_records, write_json
-from .keypoints import H36M17_NAMES, coco17_to_h36m17
-from .mmpose_adapter import run_inference
-from .quality import inspect_track
-from .rtmlib_pipeline import run_video
-from .tracks import group_tracks, interpolate_short_gaps
+from .pose.keypoints import H36M17_NAMES, coco17_to_h36m17
+from .pose.mmpose_adapter import run_inference
+from .pose.quality import inspect_track
+from .pipeline.rtmlib_pipeline import run_video
+from .tracking.tracks import group_tracks, interpolate_short_gaps
 
 
 def _validate(input_path: str) -> int:
@@ -104,11 +104,11 @@ def main() -> int:
         existing_video_config = project_root / "configs" / f"{source.stem}.json"
         automatic = args.auto_config or (args.config is None and not existing_video_config.exists())
         if automatic:
-            config_dir = project_root / "auto-video-config" / "configs" / source.stem
-            output_dir = project_root / "auto-video-config" / "outputs" / source.stem
+            config_dir = project_root / "experiments" / "auto-video-config" / "configs" / source.stem
+            output_dir = project_root / "experiments" / "auto-video-config" / "outputs" / source.stem
             if args.output_dir and Path(args.output_dir).resolve() != output_dir.resolve():
                 parser.error(
-                    "automatic runs always write to auto-video-config/outputs/<video>; "
+                    "automatic runs always write to experiments/auto-video-config/outputs/<video>; "
                     "omit output_dir"
                 )
             config_path = config_dir / "auto_config.json"

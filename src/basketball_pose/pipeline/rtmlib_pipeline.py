@@ -6,10 +6,10 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from .auto_config import shot_for_frame
-from .court import point_in_normalized_polygon, pose_foot_point
-from .io import write_json
-from .postprocess import (
+from ..config.auto_config import shot_for_frame
+from ..io import write_json
+from ..postprocess.court import point_in_normalized_polygon, pose_foot_point
+from ..postprocess.postprocess import (
     annotate_roi_tracks,
     assign_appearance_segments,
     cluster_two_teams,
@@ -19,9 +19,9 @@ from .postprocess import (
     mark_single_frame_uncertain,
     median_feature,
 )
-from .roles import UniformRules, classify_uniform
-from .sportsmot_detector import SportsMOTDetector
-from .tracking import OcclusionAwareTracker, PoseDetection, mark_overlaps
+from ..postprocess.roles import UniformRules, classify_uniform
+from ..detection.sportsmot_detector import SportsMOTDetector
+from ..tracking.tracking import OcclusionAwareTracker, PoseDetection, mark_overlaps
 
 COCO_EDGES = (
     (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
@@ -224,7 +224,7 @@ def run_video(
     import numpy as np
     import onnxruntime as ort
 
-    project_root = Path(__file__).resolve().parents[2]
+    project_root = Path(__file__).resolve().parents[3]
     os.environ.setdefault("XDG_CACHE_HOME", str(project_root / "checkpoints"))
     sportsmot = model_name == "sportsmot-rtmpose"
     if sportsmot:

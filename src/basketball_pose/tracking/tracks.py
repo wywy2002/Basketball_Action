@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable
 
-from .schema import Pose2DRecord
+from ..schema import Pose2DRecord
 
 TrackKey = tuple[str, str, str]
 

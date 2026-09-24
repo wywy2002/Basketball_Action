@@ -46,7 +46,7 @@ def inspect_video(path: Path, output_dir: Path) -> dict[str, object]:
 
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
-    output_dir = root / "outputs" / "inspection"
+    output_dir = root / "output" / "inspection"
     output_dir.mkdir(parents=True, exist_ok=True)
     metadata = [
         inspect_video(path, output_dir)

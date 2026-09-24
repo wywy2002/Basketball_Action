@@ -9,7 +9,7 @@ import onnxruntime as ort
 
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
-    output_dir = root / "outputs" / "probe"
+    output_dir = root / "output" / "probe"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     ort.preload_dlls(directory="")

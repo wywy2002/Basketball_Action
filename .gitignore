@@ -1,10 +1,22 @@
+# Python caches and local environment
 __pycache__/
 *.py[cod]
 .pytest_cache/
-.venv/
-.pip-cache/
+/.venv/
+/.pip-cache/
+
+# Generated run outputs (keep source configs and experiment summaries trackable)
+/output/
 outputs/
-output/
-third_party/
-checkpoints/
-auto-video-config/
+
+# Local inputs and downloaded model assets; provide these separately on a new machine
+/input_videos/
+/datasets/
+/checkpoints/
+*.pth
+*.pth.tar
+*.pt
+*.onnx
+*.ckpt
+*.safetensors
+*.engine

@@ -1,7 +1,7 @@
 import unittest
 
-from basketball_pose.keypoints import coco17_to_h36m17
-from basketball_pose.postprocess import (
+from basketball_pose.pose.keypoints import coco17_to_h36m17
+from basketball_pose.postprocess.postprocess import (
     assign_appearance_segments,
     annotate_roi_tracks,
     cluster_two_teams,
@@ -9,13 +9,13 @@ from basketball_pose.postprocess import (
     mark_short_stationary_boundary_tracks,
     mark_single_frame_uncertain,
 )
-from basketball_pose.auto_config import shot_for_frame
-from basketball_pose.court import point_in_normalized_polygon, pose_foot_point
-from basketball_pose.quality import inspect_track
-from basketball_pose.roles import UniformRules, classify_uniform
+from basketball_pose.config.auto_config import shot_for_frame
+from basketball_pose.postprocess.court import point_in_normalized_polygon, pose_foot_point
+from basketball_pose.pose.quality import inspect_track
+from basketball_pose.postprocess.roles import UniformRules, classify_uniform
 from basketball_pose.schema import Pose2DRecord
-from basketball_pose.tracking import OcclusionAwareTracker, PoseDetection, mark_overlaps
-from basketball_pose.tracks import group_tracks, interpolate_short_gaps
+from basketball_pose.tracking.tracking import OcclusionAwareTracker, PoseDetection, mark_overlaps
+from basketball_pose.tracking.tracks import group_tracks, interpolate_short_gaps
 
 
 def make_record(frame_id: int, x_offset: float = 0.0) -> Pose2DRecord:

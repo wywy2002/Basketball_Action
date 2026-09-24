@@ -73,14 +73,14 @@ $env:PYTHONPATH = "D:\Basketball_Action\src"
 python -m basketball_pose.cli validate examples\sample_pose2d.json
 
 # 分轨、短缺帧插值，并生成 H36M-17 输入
-python -m basketball_pose.cli preprocess examples\sample_pose2d.json outputs\prepared.json --max-gap 2
+python -m basketball_pose.cli preprocess examples\sample_pose2d.json output\prepared.json --max-gap 2
 
 # 查看真实模型入口（执行时才会要求 MMPose，并可能按其配置下载权重）
-python -m basketball_pose.cli infer input_videos\video_1.mp4 outputs\video_1 --task 2d --device cuda:0
-python -m basketball_pose.cli infer input_videos\video_1.mp4 outputs\video_1_3d --task 3d --device cuda:0
+python -m basketball_pose.cli infer input_videos\video_1.mp4 output\video_1 --task 2d --device cuda:0
+python -m basketball_pose.cli infer input_videos\video_1.mp4 output\video_1_3d --task 3d --device cuda:0
 
 # 篮球感知 2D 管线：场地过滤、裁判候选过滤、遮挡跟踪
-python -m basketball_pose.cli run-video input_videos\video_1.mp4 outputs\video_1_rtmo `
+python -m basketball_pose.cli run-video input_videos\video_1.mp4 output\video_1_rtmo `
   --config configs\video_1.json --model rtmo --device cuda
 
 # 推荐主流程：SportsMOT 球员检测 + RTMPose-X Body7
@@ -103,10 +103,10 @@ python -m basketball_pose.cli run-video input_videos\video_1.mp4 `
 自动运行的配置与产物固定分离保存，且不会覆盖 `configs/` 或 `output/`：
 
 ```text
-auto-video-config/configs/video_1/auto_config.json
-auto-video-config/configs/video_1/auto_config_analysis.json
-auto-video-config/configs/video_1/trial_diagnosis.json
-auto-video-config/outputs/video_1/
+experiments/auto-video-config/configs/video_1/auto_config.json
+experiments/auto-video-config/configs/video_1/auto_config_analysis.json
+experiments/auto-video-config/configs/video_1/trial_diagnosis.json
+experiments/auto-video-config/outputs/video_1/
 ```
 
 自动配置会对每个镜头的代表帧进行试运行；若多帧证据显示 ROI 过紧，最多只作一次
@@ -118,8 +118,8 @@ auto-video-config/outputs/video_1/
 ```powershell
 python tools\compare_auto_runs.py `
   --baseline-root output `
-  --automatic-root auto-video-config\outputs `
-  --destination auto-video-config `
+  --automatic-root experiments\auto-video-config\outputs `
+  --destination experiments\auto-video-config `
   --videos video_1 video_2 video_3
 ```
 
